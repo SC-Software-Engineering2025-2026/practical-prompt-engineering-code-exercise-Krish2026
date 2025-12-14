@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Prompt Library</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="app-header">
+        <h1>Prompt Library</h1>
+        <p class="subtitle">Save, preview, and manage your prompts locally</p>
+      </header>
+
+      <main class="main">
+        <section class="form-section">
+          <form id="prompt-form" class="prompt-form" autocomplete="off">
+            <label for="title">Title</label>
+            <input
+              id="title"
+              name="title"
+              type="text"
+              placeholder="Short title for this prompt"
+              required
+            />
+
+            <label for="content">Prompt Content</label>
+            <textarea
+              id="content"
+              name="content"
+              rows="6"
+              placeholder="Write your prompt here"
+              required
+            ></textarea>
+
+            <div class="form-actions">
+              <button id="save-btn" type="submit" class="btn primary">
+                Save Prompt
+              </button>
+            </div>
+          </form>
+        </section>
+
+        <section class="library-section">
+          <h2>Saved Prompts</h2>
+          <div
+            id="prompts-container"
+            class="prompts-grid"
+            aria-live="polite"
+          ></div>
+        </section>
+      </main>
+
+      <footer class="app-footer">&copy; Prompt Library — local only</footer>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>

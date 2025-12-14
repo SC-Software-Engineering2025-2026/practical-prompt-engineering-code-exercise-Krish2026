@@ -47,6 +47,18 @@ body {
   font-size: 0.95rem;
 }
 
+.header-actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.header-actions .btn {
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 0.9rem;
+}
+
 .main {
   display: grid;
   grid-template-columns: 380px 1fr;

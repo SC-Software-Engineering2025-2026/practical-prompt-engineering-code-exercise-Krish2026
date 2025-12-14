@@ -11,6 +11,16 @@
       <header class="app-header">
         <h1>Prompt Library</h1>
         <p class="subtitle">Save, preview, and manage your prompts locally</p>
+        <div class="header-actions">
+          <button id="export-btn" class="btn ghost">Export</button>
+          <button id="import-btn" class="btn ghost">Import</button>
+          <input
+            id="import-file"
+            type="file"
+            accept="application/json"
+            style="display: none"
+          />
+        </div>
       </header>
 
       <main class="main">

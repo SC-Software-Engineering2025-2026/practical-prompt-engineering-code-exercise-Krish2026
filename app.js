@@ -657,8 +657,228 @@ function renderNotesForPrompt(containerEl, promptId) {
 
 // -------------------- end notes feature --------------------
 
+const EXPORT_VERSION = "1.0";
+const BACKUP_KEY_BASE = "promptLibrary.backup";
+
+function buildExportPayload(prompts) {
+  const total = prompts.length;
+  // average rating (simple mean of prompt averages)
+  const avgRatings = prompts
+    .map((p) =>
+      p.rating && typeof p.rating.average === "number" ? p.rating.average : 0
+    )
+    .reduce((a, b) => a + b, 0);
+  const averageRating = total > 0 ? avgRatings / total : 0;
+
+  // most used model
+  const modelCounts = {};
+  prompts.forEach((p) => {
+    const m = p.model || "(unknown)";
+    modelCounts[m] = (modelCounts[m] || 0) + 1;
+  });
+  let mostUsedModel = null;
+  let maxCount = 0;
+  Object.keys(modelCounts).forEach((m) => {
+    if (modelCounts[m] > maxCount) {
+      maxCount = modelCounts[m];
+      mostUsedModel = m;
+    }
+  });
+
+  return {
+    version: EXPORT_VERSION,
+    exportedAt: new Date().toISOString(),
+    stats: {
+      totalPrompts: total,
+      averageRating: Number(averageRating.toFixed(3)),
+      mostUsedModel: mostUsedModel,
+    },
+    prompts: prompts,
+  };
+}
+
+function triggerDownload(filename, text) {
+  const blob = new Blob([text], { type: "application/json;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+function validateExportStructure(obj) {
+  if (!obj || typeof obj !== "object")
+    throw new Error("Export is not an object");
+  if (obj.version !== EXPORT_VERSION)
+    throw new Error("Unsupported export version: " + obj.version);
+  if (!Array.isArray(obj.prompts)) throw new Error("Missing prompts array");
+  // simple per-prompt validation
+  obj.prompts.forEach((p, idx) => {
+    if (!p.id) throw new Error(`Prompt at index ${idx} missing id`);
+    if (!p.content && p.content !== "")
+      throw new Error(`Prompt ${p.id} missing content`);
+    if (!p.title && p.title !== "")
+      throw new Error(`Prompt ${p.id} missing title`);
+  });
+  return true;
+}
+
+function exportPromptsHandler() {
+  try {
+    const prompts = loadPrompts();
+    const payload = buildExportPayload(prompts);
+    const text = JSON.stringify(payload, null, 2);
+    const ts = new Date().toISOString().replace(/[:.]/g, "-");
+    triggerDownload(`prompts-export-${ts}.json`, text);
+  } catch (e) {
+    console.error(e);
+    alert("Export failed: " + e.message);
+  }
+}
+
+function backupExistingData() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    const key = `${BACKUP_KEY_BASE}.${Date.now()}`;
+    localStorage.setItem(key, raw === null ? "" : raw);
+    return key;
+  } catch (e) {
+    console.warn("Backup failed", e);
+    return null;
+  }
+}
+
+function restoreBackup(backupKey) {
+  try {
+    const data = localStorage.getItem(backupKey);
+    if (data === null) {
+      // clear
+      localStorage.removeItem(STORAGE_KEY);
+    } else {
+      localStorage.setItem(STORAGE_KEY, data);
+    }
+    return true;
+  } catch (e) {
+    console.error("Rollback failed", e);
+    return false;
+  }
+}
+
+async function performImportPayload(obj, strategy = "merge") {
+  // strategy: 'merge' | 'replace' | 'skip' | 'ask'
+  validateExportStructure(obj);
+  const incoming = normalizePrompts(obj.prompts || []);
+  const existing = loadPrompts();
+  const existingMap = new Map(existing.map((p) => [p.id, p]));
+
+  const backupKey = backupExistingData();
+  try {
+    const result = [];
+    for (const p of incoming) {
+      const exists = existingMap.get(p.id);
+      if (!exists) {
+        // new prompt
+        result.push(p);
+        existingMap.set(p.id, p);
+      } else {
+        // conflict
+        let action = strategy;
+        if (strategy === "ask") {
+          const r = confirm(
+            `Prompt with id ${p.id} exists. Replace? (OK=replace, Cancel=skip)`
+          );
+          action = r ? "replace" : "skip";
+        }
+
+        if (action === "replace") {
+          existingMap.set(p.id, p);
+        } else if (action === "merge") {
+          // merge heuristics: keep most recently updated
+          try {
+            const a = new Date(exists.updatedAt || exists.createdAt || 0);
+            const b = new Date(p.updatedAt || p.createdAt || 0);
+            if (b > a) existingMap.set(p.id, p);
+            // else keep existing
+          } catch (e) {
+            existingMap.set(p.id, p);
+          }
+        } else if (action === "skip") {
+          // keep existing
+        }
+      }
+    }
+
+    // build final array
+    const merged = Array.from(existingMap.values());
+    savePrompts(merged);
+    renderPrompts();
+    return { success: true, imported: incoming.length };
+  } catch (err) {
+    // rollback
+    restoreBackup(backupKey);
+    throw err;
+  }
+}
+
+function importFileFromInput(file, strategyChoice = null) {
+  return new Promise((resolve, reject) => {
+    if (!file) return reject(new Error("No file provided"));
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      try {
+        const text = ev.target.result;
+        const parsed = JSON.parse(text);
+        // decide strategy
+        let strategy = strategyChoice;
+        if (!strategy) {
+          // prompt user for default strategy
+          strategy = prompt(
+            "Import strategy for duplicates: 'merge', 'replace', 'skip', or 'ask'",
+            "merge"
+          );
+          if (!strategy) strategy = "merge";
+          strategy = strategy.toLowerCase().trim();
+          if (!["merge", "replace", "skip", "ask"].includes(strategy))
+            strategy = "merge";
+        }
+        const res = await performImportPayload(parsed, strategy);
+        resolve(res);
+      } catch (e) {
+        reject(e);
+      }
+    };
+    reader.onerror = (err) => reject(err);
+    reader.readAsText(file, "utf-8");
+  });
+}
+
+function handleFileInputChange(e) {
+  const f = e.target.files && e.target.files[0];
+  if (!f) return;
+  importFileFromInput(f)
+    .then((r) => alert(`Import completed: ${r.imported} items`))
+    .catch((err) =>
+      alert("Import failed: " + (err && err.message ? err.message : err))
+    );
+}
+
+// -------------------- end Export / Import feature --------------------
+
 document.addEventListener("DOMContentLoaded", () => {
   const form = document.getElementById("prompt-form");
   form.addEventListener("submit", addPromptFromForm);
   renderPrompts();
+
+  // wire export/import buttons
+  const exportBtn = document.getElementById("export-btn");
+  const importBtn = document.getElementById("import-btn");
+  const importFile = document.getElementById("import-file");
+
+  if (exportBtn) exportBtn.addEventListener("click", exportPromptsHandler);
+  if (importBtn && importFile)
+    importBtn.addEventListener("click", () => importFile.click());
+  if (importFile) importFile.addEventListener("change", handleFileInputChange);
 });

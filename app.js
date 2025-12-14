@@ -8,10 +8,103 @@ function normalizePrompts(prompts) {
     title: typeof p.title === "string" ? p.title : "",
     content: typeof p.content === "string" ? p.content : "",
     createdAt: p.createdAt || new Date().toISOString(),
+    // metadata fields
+    model: typeof p.model === "string" ? p.model : "",
+    updatedAt: p.updatedAt || p.createdAt || new Date().toISOString(),
+    tokenEstimate: p.tokenEstimate || null,
     rating: p.rating || { average: 0, count: 0 },
     userRating: typeof p.userRating === "number" ? p.userRating : null,
   }));
 }
+
+// ---------------- Metadata tracking functions ----------------
+
+function isValidISO8601(s) {
+  if (typeof s !== "string") return false;
+  try {
+    const d = new Date(s);
+    return d.toISOString() === s;
+  } catch (e) {
+    return false;
+  }
+}
+
+function validateModelName(name) {
+  if (typeof name !== "string" || !name.trim())
+    throw new Error("Model name must be a non-empty string.");
+  if (name.length > 100)
+    throw new Error("Model name must be 100 characters or fewer.");
+  return name.trim();
+}
+
+function estimateTokens(text, isCode) {
+  try {
+    if (typeof text !== "string") throw new Error("Text must be a string.");
+    const wordCount = text.trim() ? text.trim().split(/\s+/).length : 0;
+    const charCount = text.length;
+
+    let min = 0.75 * wordCount;
+    let max = 0.25 * charCount;
+
+    if (isCode) {
+      min = min * 1.3;
+      max = max * 1.3;
+    }
+
+    // round to integers
+    min = Math.max(0, Math.round(min));
+    max = Math.max(0, Math.round(max));
+
+    // choose the larger estimate to judge confidence
+    const baseline = Math.max(min, max);
+    let confidence = "high";
+    if (baseline >= 5001) confidence = "low";
+    else if (baseline >= 1000) confidence = "medium";
+
+    return { min, max, confidence };
+  } catch (e) {
+    throw new Error("Failed to estimate tokens: " + e.message);
+  }
+}
+
+function trackModel(modelName, content) {
+  try {
+    const model = validateModelName(modelName);
+    const createdAt = new Date().toISOString();
+    if (!isValidISO8601(createdAt))
+      throw new Error("Failed to create valid ISO timestamp.");
+    const isCode = /```|<\/?code|function\(|\{|\};/.test(content || "");
+    const tokenEstimate = estimateTokens(content || "", Boolean(isCode));
+
+    return {
+      model,
+      createdAt,
+      updatedAt: createdAt,
+      tokenEstimate,
+    };
+  } catch (e) {
+    throw e;
+  }
+}
+
+function updateTimestamps(metadata) {
+  try {
+    if (!metadata || typeof metadata !== "object")
+      throw new Error("metadata must be an object");
+    const now = new Date().toISOString();
+    if (!isValidISO8601(now)) throw new Error("Generated timestamp invalid");
+    const created = metadata.createdAt;
+    if (!isValidISO8601(created))
+      throw new Error("metadata.createdAt must be a valid ISO 8601 string");
+    if (new Date(now) < new Date(created))
+      throw new Error("updatedAt must be greater than or equal to createdAt");
+    return Object.assign({}, metadata, { updatedAt: now });
+  } catch (e) {
+    throw e;
+  }
+}
+
+// ---------------- end metadata functions ----------------
 
 function loadPrompts() {
   try {
@@ -28,12 +121,17 @@ function savePrompts(prompts) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(prompts));
 }
 
-function createPromptObject(title, content) {
+function createPromptObject(title, content, modelName) {
+  // prefer to be called with validated strings
+  const meta = trackModel(modelName || "unknown", content || "");
   return {
     id: Date.now().toString(),
     title: title.trim(),
     content: content.trim(),
-    createdAt: new Date().toISOString(),
+    createdAt: meta.createdAt,
+    model: meta.model,
+    updatedAt: meta.updatedAt,
+    tokenEstimate: meta.tokenEstimate,
     rating: { average: 0, count: 0 },
     userRating: null,
   };
@@ -59,10 +157,10 @@ function renderPrompts() {
     return;
   }
 
-  // reverse so newest first
+  // sort by createdAt descending (newest first)
   prompts
     .slice()
-    .reverse()
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
     .forEach((p) => {
       const card = document.createElement("article");
       card.className = "card";
@@ -71,6 +169,54 @@ function renderPrompts() {
       const title = document.createElement("div");
       title.className = "title";
       title.textContent = p.title || "(untitled)";
+
+      // metadata block (model, timestamps, token estimate)
+      const metaBlock = document.createElement("div");
+      metaBlock.className = "meta-block";
+
+      const modelEl = document.createElement("div");
+      modelEl.className = "meta-model";
+      modelEl.textContent = `Model: ${p.model || "(unknown)"}`;
+
+      const createdEl = document.createElement("div");
+      createdEl.className = "meta-created";
+      try {
+        createdEl.textContent = `Created: ${new Date(
+          p.createdAt
+        ).toLocaleString()}`;
+      } catch (e) {
+        createdEl.textContent = `Created: ${p.createdAt}`;
+      }
+
+      const updatedEl = document.createElement("div");
+      updatedEl.className = "meta-updated";
+      try {
+        updatedEl.textContent = `Updated: ${new Date(
+          p.updatedAt || p.createdAt
+        ).toLocaleString()}`;
+      } catch (e) {
+        updatedEl.textContent = `Updated: ${p.updatedAt || p.createdAt}`;
+      }
+
+      const tokenWrap = document.createElement("div");
+      tokenWrap.className = "token-estimate";
+      if (p.tokenEstimate && typeof p.tokenEstimate === "object") {
+        const te = p.tokenEstimate;
+        const confClass =
+          te.confidence === "low"
+            ? "confidence-low"
+            : te.confidence === "medium"
+            ? "confidence-medium"
+            : "confidence-high";
+        tokenWrap.innerHTML = `<span class="token-values">${te.min}–${te.max} tokens</span> <span class="token-confidence ${confClass}">${te.confidence}</span>`;
+      } else {
+        tokenWrap.textContent = "Token estimate: N/A";
+      }
+
+      metaBlock.appendChild(modelEl);
+      metaBlock.appendChild(createdEl);
+      metaBlock.appendChild(updatedEl);
+      metaBlock.appendChild(tokenWrap);
 
       // stars container (rating UI)
       const starsContainer = document.createElement("div");
@@ -99,6 +245,8 @@ function renderPrompts() {
       row.appendChild(del);
 
       card.appendChild(title);
+      // metadata (model, timestamps, estimate)
+      card.appendChild(metaBlock);
       card.appendChild(starsContainer);
       card.appendChild(preview);
       // notes section for this prompt
@@ -218,6 +366,8 @@ function addPromptFromForm(e) {
   const contentEl = document.getElementById("content");
   const title = titleEl.value;
   const content = contentEl.value;
+  const modelEl = document.getElementById("model");
+  const model = modelEl ? modelEl.value : "unknown";
 
   if (!title.trim() || !content.trim()) {
     // simple validation
@@ -227,13 +377,20 @@ function addPromptFromForm(e) {
   }
 
   const prompts = loadPrompts();
-  const obj = createPromptObject(title, content);
+  let obj;
+  try {
+    obj = createPromptObject(title, content, model);
+  } catch (err) {
+    alert("Failed to create prompt: " + err.message);
+    return;
+  }
   prompts.push(obj);
   savePrompts(prompts);
 
   // reset form and re-render
   titleEl.value = "";
   contentEl.value = "";
+  if (modelEl) modelEl.value = "";
   renderPrompts();
 }
 

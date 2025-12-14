@@ -133,6 +133,53 @@ body {
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
 }
+/* Metadata block shown on prompt cards */
+.meta-block {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 0.82rem;
+  margin-top: 6px;
+}
+.meta-block > div {
+  background: rgba(15, 23, 42, 0.02);
+  padding: 6px 8px;
+  border-radius: 8px;
+}
+.meta-model {
+  font-weight: 700;
+  color: #0f172a;
+}
+.token-estimate {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+}
+.token-values {
+  font-weight: 700;
+  color: #0f172a;
+}
+.token-confidence {
+  padding: 4px 8px;
+  border-radius: 999px;
+  text-transform: capitalize;
+  font-size: 0.75rem;
+  color: #08121a;
+}
+.confidence-high {
+  background: #bbf7d0;
+  color: #064e3b;
+}
+.confidence-medium {
+  background: #fef3c7;
+  color: #92400e;
+}
+.confidence-low {
+  background: #fecaca;
+  color: #7f1d1d;
+}
 .card .card-row {
   display: flex;
   align-items: center;
